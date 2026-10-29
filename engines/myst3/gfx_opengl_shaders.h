@@ -41,6 +41,9 @@ public:
 
 	void clear() override;
 	void selectTargetWindow(Window *window, bool is3D, bool scaled) override;
+#ifdef USE_OPENXR
+	bool supportsXR() const override { return true; }
+#endif
 
 	Texture *createTexture3D(const Graphics::Surface *surface) override;
 

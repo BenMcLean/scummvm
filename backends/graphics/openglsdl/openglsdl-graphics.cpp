@@ -23,6 +23,9 @@
 #include "backends/graphics/opengl/texture.h"
 #include "backends/events/sdl/sdl-events.h"
 #include "backends/platform/sdl/sdl.h"
+#ifdef USE_OPENXR
+#include "backends/xr/openxr-theatre.h"
+#endif
 #include "graphics/scaler/aspect.h"
 #ifdef USE_SCALERS
 #include "graphics/scalerplugin.h"
@@ -227,6 +230,9 @@ OpenGLSdlGraphicsManager::~OpenGLSdlGraphicsManager() {
 }
 
 void OpenGLSdlGraphicsManager::deinitOpenGLContext() {
+#ifdef USE_OPENXR
+	XR::shutdown();
+#endif
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 	if (!_glContext) {
 		return;
@@ -397,6 +403,10 @@ void OpenGLSdlGraphicsManager::updateScreen() {
 #endif
 
 	OpenGLGraphicsManager::updateScreen();
+
+#ifdef USE_OPENXR
+	XR::pump();
+#endif
 }
 
 void OpenGLSdlGraphicsManager::notifyVideoExpose() {
@@ -632,6 +642,10 @@ void OpenGLSdlGraphicsManager::refreshScreen() {
 
 #if defined(USE_IMGUI) && SDL_VERSION_ATLEAST(2, 0, 0)
 	renderImGui();
+#endif
+
+#ifdef USE_OPENXR
+	XR::captureBackbuffer();
 #endif
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)

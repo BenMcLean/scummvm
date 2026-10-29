@@ -159,6 +159,16 @@ public:
 
 	void setupCameraPerspective(float pitch, float heading, float fov);
 
+#ifdef USE_OPENXR
+	/** Whether the renderer can draw into an XR eye target */
+	virtual bool supportsXR() const { return false; }
+
+	/** Draw into an off-screen eye target of the specified size, or on the screen when 0 */
+	void setXRTarget(int width, int height) { _xrTarget = Common::Rect(width, height); }
+
+	void setupCameraXR(const Math::Matrix4 &projection, const Math::Matrix4 &modelView);
+#endif
+
 	bool isCubeFaceVisible(uint face);
 
 	Math::Matrix4 getMvpMatrix() const { return _mvpMatrix; }
@@ -186,6 +196,10 @@ protected:
 	Math::Matrix4 _mvpMatrix;
 
 	Math::Frustum _frustum;
+
+#ifdef USE_OPENXR
+	Common::Rect _xrTarget;
+#endif
 
 	static const float cubeVertices[5 * 6 * 4];
 	Math::AABB _cubeFacesAABB[6];

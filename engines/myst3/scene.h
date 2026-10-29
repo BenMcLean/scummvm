@@ -37,6 +37,12 @@ private:
 
 	uint _mouseSpeed;
 
+#ifdef USE_OPENXR
+	float _xrYawOffset = 0.0f;
+	float _xrLastHeading = 0.0f;
+	bool _xrHaveLast = false;
+#endif
+
 public:
 	Scene(Myst3Engine *vm);
 
@@ -50,6 +56,23 @@ public:
 
 	void screenPosToDirection(const Common::Point &screen, float &pitch, float &heading) const;
 	static Math::Vector3d directionToVector(float pitch, float heading);
+
+#ifdef USE_OPENXR
+	/** Whether the headset is currently driving the camera */
+	bool isXRActive() const;
+
+	/** Follow the game's own view changes. Returns false if the head pose is unavailable. */
+	bool syncXR();
+
+	/** Heading of the game world straight ahead of the headset's reference orientation */
+	float getXRYawOffset() const { return _xrYawOffset; }
+
+	/** Override the camera angles with the head pose */
+	void applyHeadTracking(float &pitch, float &heading);
+
+	/** Direction the pointing controller aims at, in game angles */
+	bool getXRPointerDirection(float &pitch, float &heading);
+#endif
 
 	void drawSunspotFlare(const SunSpot &s);
 	float distanceToZone(float spotHeading, float spotPitch, float spotRadius, float heading, float pitch);

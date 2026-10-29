@@ -34,6 +34,11 @@ MODULE_OBJS += \
 	gfx_tinygl_texture.o
 endif
 
+ifdef USE_OPENXR
+MODULE_OBJS += \
+	xr.o
+endif
+
 # This module can be built as a plugin
 ifeq ($(ENABLE_MYST3), DYNAMIC_PLUGIN)
 PLUGIN := 1

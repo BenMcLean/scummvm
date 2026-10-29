@@ -155,6 +155,14 @@ void ShaderRenderer::clear() {
 }
 
 void ShaderRenderer::selectTargetWindow(Window *window, bool is3D, bool scaled) {
+#ifdef USE_OPENXR
+	if (!_xrTarget.isEmpty()) {
+		glViewport(0, 0, _xrTarget.width(), _xrTarget.height());
+		_currentViewport = _xrTarget;
+		return;
+	}
+#endif
+
 	if (!window) {
 		// No window found ...
 		if (scaled) {

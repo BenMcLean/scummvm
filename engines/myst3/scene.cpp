@@ -58,6 +58,10 @@ void Scene::updateCamera(Common::Point &mouse) {
 		heading += mouse.x * speed;
 	}
 
+#ifdef USE_OPENXR
+	applyHeadTracking(pitch, heading);
+#endif
+
 	// Keep heading within allowed values
 	if (_vm->_state->isCameraLimited()) {
 		float minHeading = _vm->_state->getMinHeading();
@@ -93,6 +97,10 @@ void Scene::updateCamera(Common::Point &mouse) {
 	}
 
 	pitch = CLIP(pitch, minPitch, maxPitch);
+
+#ifdef USE_OPENXR
+	_xrLastHeading = heading;
+#endif
 
 	_vm->_state->lookAt(pitch, heading);
 	_vm->_state->setCameraPitch((int32)pitch);

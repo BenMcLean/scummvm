@@ -169,6 +169,24 @@ void Renderer::setupCameraPerspective(float pitch, float heading, float fov) {
 	_mvpMatrix.transpose();
 }
 
+#ifdef USE_OPENXR
+void Renderer::setupCameraXR(const Math::Matrix4 &projection, const Math::Matrix4 &modelView) {
+	_projectionMatrix = projection;
+	_modelViewMatrix = modelView;
+
+	Math::Matrix4 proj = _projectionMatrix;
+	Math::Matrix4 model = _modelViewMatrix;
+	proj.transpose();
+	model.transpose();
+
+	_mvpMatrix = proj * model;
+
+	_frustum.setup(_mvpMatrix);
+
+	_mvpMatrix.transpose();
+}
+#endif
+
 bool Renderer::isCubeFaceVisible(uint face) {
 	assert(face < 6);
 

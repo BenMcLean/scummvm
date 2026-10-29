@@ -232,6 +232,24 @@ void Cursor::draw() {
 	_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, texture, transparency);
 }
 
+#ifdef USE_OPENXR
+void Cursor::drawAt(const Common::Point &position, float scale) {
+	assert(_currentCursorID < ARRAYSIZE(availableCursors));
+
+	const CursorData &cursor = availableCursors[_currentCursorID];
+	Texture *texture = _textures[cursor.nodeID];
+	if (!texture)
+		return;
+
+	Common::Rect screenRect = Common::Rect(texture->width * scale, texture->height * scale);
+	screenRect.translate(position.x - cursor.hotspotX * scale, position.y - cursor.hotspotY * scale);
+
+	Common::Rect textureRect = Common::Rect(texture->width, texture->height);
+
+	_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, texture, 1.0f);
+}
+#endif
+
 void Cursor::setVisible(bool show) {
 	if (show)
 		_hideLevel = MAX<int32>(0, --_hideLevel);
@@ -248,6 +266,10 @@ void Cursor::getDirection(float &pitch, float &heading) {
 		pitch = _vm->_state->getLookAtPitch();
 		heading = _vm->_state->getLookAtHeading();
 	} else {
+#ifdef USE_OPENXR
+		if (_vm->_scene->getXRPointerDirection(pitch, heading))
+			return;
+#endif
 		_vm->_scene->screenPosToDirection(_position, pitch, heading);
 	}
 }

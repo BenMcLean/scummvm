@@ -191,6 +191,12 @@ MODULE_OBJS += \
 	vkeybd/virtual-keyboard-parser.o
 endif
 
+# OpenXR (VR headset) support
+ifdef USE_OPENXR
+MODULE_OBJS += \
+	xr/openxr-theatre.o
+endif
+
 # OpenGL specific source files.
 ifdef USE_OPENGL
 MODULE_OBJS += \

@@ -55,6 +55,10 @@ public:
 	void getDirection(float &pitch, float &heading);
 
 	void draw() override;
+#ifdef USE_OPENXR
+	/** Draw the current cursor image with its hotspot at the specified position */
+	void drawAt(const Common::Point &position, float scale);
+#endif
 	void setVisible(bool show);
 	bool isVisible();
 private:

@@ -573,6 +573,14 @@ void Myst3Engine::processInput(bool interactive) {
 		}
 	}
 
+#ifdef USE_OPENXR
+	// The headset drives the camera even when the mouse doesn't move
+	if (_state->getViewType() == kCube && _scene->isXRActive()) {
+		Common::Point noMovement;
+		_scene->updateCamera(noMovement);
+	}
+#endif
+
 	// The input state variables need to be set before calling the scripts
 	updateInputState();
 
@@ -699,6 +707,9 @@ void Myst3Engine::updateInputState() {
 }
 
 void Myst3Engine::interactWithHoveredElement() {
+#ifdef USE_OPENXR
+	debug(1, "XRDIAG click room=%d node=%d", _state->getLocationRoom(), _state->getLocationNode());
+#endif
 	if (isInventoryVisible() && _inventory->isMouseInside()) {
 		uint16 hoveredInventory = _inventory->hoveredItem();
 		if (hoveredInventory > 0) {
@@ -804,6 +815,11 @@ void Myst3Engine::drawFrame(bool noSwap, bool pausePreloadedScriptMovies) {
 	if (cursorVisible)
 		_gfx->renderDrawable(_cursor, _scene);
 
+#ifdef USE_OPENXR
+	if (_state->getViewType() == kCube)
+		drawStereoPanorama();
+#endif
+
 	_gfx->flipBuffer();
 
 	if (!noSwap) {
@@ -862,7 +878,11 @@ void Myst3Engine::goToNode(uint16 nodeID, TransitionType transitionType) {
 	setupTransition();
 
 	ViewType sourceViewType = _state->getViewType();
-	if (sourceViewType == kCube) {
+	if (sourceViewType == kCube
+#ifdef USE_OPENXR
+	        && !_scene->isXRActive()
+#endif
+	        ) {
 		// The lookat direction in the next node should be
 		// the direction of the mouse cursor
 		float pitch, heading;

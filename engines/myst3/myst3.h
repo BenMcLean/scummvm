@@ -175,6 +175,9 @@ public:
 	void getMovieLookAt(uint16 id, bool start, float &pitch, float &heading);
 
 	void drawFrame(bool noSwap = false, bool pausePreloadedScriptMovies = false);
+#ifdef USE_OPENXR
+	void drawStereoPanorama();
+#endif
 
 	void processInput(bool interactive);
 	void processEventForKeyboardState(const Common::Event &event);
