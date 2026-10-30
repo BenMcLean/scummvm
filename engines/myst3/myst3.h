@@ -176,7 +176,14 @@ public:
 
 	void drawFrame(bool noSwap = false, bool pausePreloadedScriptMovies = false);
 #ifdef USE_OPENXR
+	/** Transitions to and from panoramas are not drawn in the headset, the view just cuts */
+	bool shouldSkipTransitionForXR() const;
+#endif
+#ifdef USE_OPENXR
+	void drawXRFrame();
 	void drawStereoPanorama();
+	bool beginXRMovie(bool changesNode);
+	void endXRMovie(float startHeading);
 #endif
 
 	void processInput(bool interactive);
@@ -236,6 +243,22 @@ private:
 	 * the inventory.
 	 */
 	bool _inventoryManualHide;
+
+#ifdef USE_OPENXR
+	/** Keep showing the flat window in the headset, even in a panorama node */
+	bool _xrTheater = false;
+
+	/** The node a transition starts from is a panorama */
+	bool _xrTransitionFromPanorama = false;
+
+	/** A movie is playing inside the panorama */
+	bool _xrWorldMovie = false;
+	float _xrMovieFov = 65.0f;
+
+	/** The node being left stays visible around the movie, instead of being deleted */
+	Node *_xrBackdrop = nullptr;
+	bool _xrKeepBackdrop = false;
+#endif
 
 	HotSpot *getHoveredHotspot(NodePtr nodeData, uint16 var = 0);
 	void updateCursor();

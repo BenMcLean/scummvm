@@ -78,6 +78,11 @@ void Transition::draw(TransitionType type) {
 		return;
 	}
 
+#ifdef USE_OPENXR
+	if (_vm->shouldSkipTransitionForXR())
+		return;
+#endif
+
 	// Capture a screenshot of the destination node
 	_vm->drawFrame(true);
 	Texture *targetScreenshot = _vm->_gfx->copyScreenshotToTexture();

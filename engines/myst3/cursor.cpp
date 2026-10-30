@@ -262,14 +262,16 @@ bool Cursor::isVisible() {
 }
 
 void Cursor::getDirection(float &pitch, float &heading) {
+#ifdef USE_OPENXR
+	// The controller points freely, even when the cursor is locked at the center of the view
+	if (_vm->_scene->getXRPointerDirection(pitch, heading))
+		return;
+#endif
+
 	if (_lockedAtCenter) {
 		pitch = _vm->_state->getLookAtPitch();
 		heading = _vm->_state->getLookAtHeading();
 	} else {
-#ifdef USE_OPENXR
-		if (_vm->_scene->getXRPointerDirection(pitch, heading))
-			return;
-#endif
 		_vm->_scene->screenPosToDirection(_position, pitch, heading);
 	}
 }

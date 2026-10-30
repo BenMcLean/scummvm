@@ -27,15 +27,16 @@
 #ifdef USE_OPENXR
 
 /**
- * OpenXR support for the SDL OpenGL backend.
+ * OpenXR support for backends with an OpenGL context.
  *
  * By default ("theatre mode") the ScummVM window contents are shown on a
  * floating quad, and a controller ray is turned into SDL mouse events.
  * Engines can additionally render stereo views themselves (see beginStereo()),
  * in which case the quad is replaced by the engine's views.
  *
- * Enabled at runtime by setting the SCUMMVM_XR environment variable.
- * Requires an SDL window with a current X11 OpenGL (GLX) context.
+ * Enabled at runtime by setting the SCUMMVM_XR environment variable (SDL)
+ * or the "xr" configuration key (Android).
+ * The window system specific parts live in a backends/xr/openxr-platform.h implementation.
  */
 namespace XR {
 
@@ -82,6 +83,12 @@ void endStereo();
  * positive to the right.
  */
 float consumeTurn();
+
+/** Stop considering the engine to be rendering stereo frames. The window is shown on the theatre quad. */
+void leaveStereo();
+
+/** Whether a headset session is running. */
+bool isSessionRunning();
 
 /** Whether a stereo frame was submitted recently. */
 bool isStereoActive();

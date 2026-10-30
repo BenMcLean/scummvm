@@ -46,6 +46,17 @@ bool operator<(const TLanguage &l, const TLanguage &r) {
 	return l.name < r.name;
 }
 
+#ifdef USE_OPENXR
+// The VR builds do not ship fonts-cjk.dat, which the GUI needs for these languages
+static bool isLanguageAvailable(const String &lang) {
+	return lang != "ja" && lang != "ko" && !lang.hasPrefix("zh");
+}
+#else
+static bool isLanguageAvailable(const String &lang) {
+	return true;
+}
+#endif
+
 TranslationManager::TranslationManager(const Common::String &fileName) : _currentLang(-1), _havePoDirectory(false), _usingPo(false) {
 	FSNode root(".");
 	FSNode poDir = root.getChild("po");
@@ -69,6 +80,9 @@ int32 TranslationManager::findMatchingLanguage(const String &lang) {
 	// Try to match languages of the same length or longer ones
 	// that can be cut at the length of the given one.
 	for (uint i = 0; i < numLangs; ++i) {
+		if (!isLanguageAvailable(_langs[i]))
+			continue;
+
 		uint iLength = _langs[i].size();
 		if (iLength >= langLength) {
 			// Found a candidate; compare the full string by default.
@@ -244,6 +258,9 @@ const TLangArray TranslationManager::getSupportedLanguageNames() const {
 	TLangArray languages;
 
 	for (unsigned int i = 0; i < _langNames.size(); i++) {
+		if (!isLanguageAvailable(_langs[i]))
+			continue;
+
 		TLanguage lng(_langNames[i].decode(), i + 1);
 		languages.push_back(lng);
 	}
@@ -255,7 +272,7 @@ const TLangArray TranslationManager::getSupportedLanguageNames() const {
 
 int TranslationManager::parseLanguage(const String &lang) const {
 	for (unsigned int i = 0; i < _langs.size(); i++) {
-		if (lang == _langs[i])
+		if (lang == _langs[i] && isLanguageAvailable(_langs[i]))
 			return i + 1;
 	}
 

@@ -23,9 +23,6 @@
 
 #ifdef USE_OPENXR
 
-#include "common/config-manager.h"
-#include "common/debug.h"
-
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/cursor.h"
 #include "engines/myst3/gfx.h"
@@ -74,6 +71,16 @@ bool Scene::syncXR() {
 	return true;
 }
 
+void Scene::xrAlignWorld(float referenceHeading) {
+	_xrLastHeading = referenceHeading;
+}
+
+void Scene::xrAlignToGaze() {
+	float headYaw, headPitch;
+	if (XR::getHeadOrientation(headYaw, headPitch))
+		_xrLastHeading = _xrYawOffset - headYaw;
+}
+
 void Scene::applyHeadTracking(float &pitch, float &heading) {
 	if (!XR::isStereoActive() || !syncXR())
 		return;
@@ -97,6 +104,49 @@ bool Scene::getXRPointerDirection(float &pitch, float &heading) {
 	return true;
 }
 
+void Myst3Engine::drawXRFrame() {
+	if (_xrWorldMovie || (_state->getViewType() == kCube && !_xrTheater))
+		drawStereoPanorama();
+	else
+		XR::leaveStereo();
+}
+
+bool Myst3Engine::shouldSkipTransitionForXR() const {
+	return XR::isSessionRunning() && (_xrTransitionFromPanorama || _state->getViewType() == kCube);
+}
+
+bool Myst3Engine::beginXRMovie(bool changesNode) {
+	if (!XR::isSessionRunning())
+		return false;
+
+	if (_state->getViewType() == kCube && _scene->isXRActive()) {
+		// Movies starting in a panorama play inside it, where they start
+		_xrWorldMovie = true;
+		_xrMovieFov = _state->getLookAtFOV();
+		_xrKeepBackdrop = changesNode;
+	} else {
+		// Otherwise show them in the theatre, together with the flat node they come from
+		_xrTheater = true;
+	}
+	return true;
+}
+
+void Myst3Engine::endXRMovie(float startHeading) {
+	if (_state->getViewType() == kCube) {
+		// Keep the end of the movie where the movie was shown
+		if (_xrWorldMovie)
+			_scene->xrAlignWorld(startHeading);
+		else
+			_scene->xrAlignToGaze();
+	}
+
+	delete _xrBackdrop;
+	_xrBackdrop = nullptr;
+	_xrKeepBackdrop = false;
+	_xrWorldMovie = false;
+	_xrTheater = false;
+}
+
 void Myst3Engine::drawStereoPanorama() {
 	if (!_gfx->supportsXR())
 		return;
@@ -108,16 +158,8 @@ void Myst3Engine::drawStereoPanorama() {
 	_scene->syncXR();
 	const float yawOffset = _scene->getXRYawOffset();
 
-	// TEMPORARY diagnostics
-	static uint32 diagFrame = 0;
-	if (diagFrame++ % 60 == 0) {
-		debug(1, "XRDIAG room=%d node=%d age=%d movies=%d cursorVisible=%d cursorLocked=%d hidden=%d", _state->getLocationRoom(), _state->getLocationNode(),
-		      _state->getLocationAge(), _movies.size(), _cursor->isVisible(), _state->getCursorLocked(), _state->getCursorHidden());
-	}
-
 	static const float nearClip = 1.0f;
 	static const float farClip = 10000.0f;
-	const float rollSign = ConfMan.hasKey("xr_roll_flip") && ConfMan.getBool("xr_roll_flip") ? -1.0f : 1.0f;
 
 	float pointerPitch, pointerHeading;
 	const bool hasPointer = _scene->getXRPointerDirection(pointerPitch, pointerHeading);
@@ -133,14 +175,22 @@ void Myst3Engine::drawStereoPanorama() {
 				view.tanLeft * nearClip, view.tanRight * nearClip,
 				view.tanDown * nearClip, view.tanUp * nearClip,
 				nearClip, farClip);
-		Math::Matrix4 modelView(180.0f - heading, view.pitch, rollSign * view.roll, Math::EO_YXZ);
+		Math::Matrix4 modelView(180.0f - heading, view.pitch, view.roll, Math::EO_YXZ);
 		_gfx->setupCameraXR(projection, modelView);
 
-		if (_node)
+		// While a movie plays inside the panorama, everything around it is black
+		if (!_xrWorldMovie && _state->getViewType() == kCube && _node)
 			_gfx->renderDrawable(_node, _scene);
 
-		for (int i = _movies.size() - 1; i >= 0; i--)
-			_gfx->renderDrawable(_movies[i], _scene);
+		if (!_xrBackdrop) {
+			for (int i = _movies.size() - 1; i >= 0; i--)
+				_gfx->renderDrawable(_movies[i], _scene);
+		}
+
+		for (uint i = 0; i < _drawables.size(); i++) {
+			if (_drawables[i]->is3D())
+				_gfx->renderDrawable(_drawables[i], _scene);
+		}
 
 		float pointerX, pointerY;
 		if (hasPointer && _cursor->isVisible() && XR::projectAim(eye, pointerX, pointerY)) {

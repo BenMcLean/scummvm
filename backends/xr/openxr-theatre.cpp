@@ -23,32 +23,19 @@
 
 #include "common/scummsys.h"
 
-#if defined(USE_OPENXR) && defined(SDL_BACKEND)
+#ifdef USE_OPENXR
 
 #include "common/array.h"
 #include "common/debug.h"
 #include "common/str.h"
+#include "common/system.h"
 #include "common/textconsole.h"
-
-#include <SDL.h>
-#include <SDL_syswm.h>
-
-#if defined(SDL_VIDEO_DRIVER_X11) && SDL_VERSION_ATLEAST(2, 0, 0)
 
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-#include <X11/Xlib.h>
-#include <GL/gl.h>
-#include <GL/glx.h>
-#include <GL/glext.h>
-
-#define XR_USE_PLATFORM_XLIB
-#define XR_USE_GRAPHICS_API_OPENGL
-#include <openxr/openxr.h>
-#include <openxr/openxr_platform.h>
-
+#include "backends/xr/openxr-platform.h"
 #include "backends/xr/openxr-theatre.h"
 
 namespace XR {
@@ -77,35 +64,9 @@ const float kSnapRelease = 0.3f;
 // A stereo frame submitted within this time means the engine is driving the headset
 const uint32 kStereoTimeoutMs = 150;
 
-struct GLFuncs {
-	PFNGLGENFRAMEBUFFERSPROC genFramebuffers;
-	PFNGLDELETEFRAMEBUFFERSPROC deleteFramebuffers;
-	PFNGLBINDFRAMEBUFFERPROC bindFramebuffer;
-	PFNGLFRAMEBUFFERTEXTURE2DPROC framebufferTexture2D;
-	PFNGLBLITFRAMEBUFFERPROC blitFramebuffer;
-	PFNGLGENRENDERBUFFERSPROC genRenderbuffers;
-	PFNGLBINDRENDERBUFFERPROC bindRenderbuffer;
-	PFNGLRENDERBUFFERSTORAGEPROC renderbufferStorage;
-	PFNGLFRAMEBUFFERRENDERBUFFERPROC framebufferRenderbuffer;
-	decltype(&glGenTextures) genTextures;
-	decltype(&glBindTexture) bindTexture;
-	decltype(&glTexImage2D) texImage2D;
-	decltype(&glGetIntegerv) getIntegerv;
-	decltype(&glIsEnabled) isEnabled;
-	decltype(&glEnable) enable;
-	decltype(&glDisable) disable;
-	decltype(&glFinish) finish;
-	decltype(&glViewport) viewport;
-	decltype(&glClear) clear;
-	decltype(&glClearColor) clearColor;
-	decltype(&glDepthMask) depthMask;
-	decltype(&glColorMask) colorMask;
-};
-
 struct Context {
 	State state;
 	GLFuncs gl;
-	SDL_Window *window;
 
 	XrInstance instance;
 	XrSystemId systemId;
@@ -122,14 +83,14 @@ struct Context {
 
 	// Swapchain carrying the mirror to the compositor (theatre mode)
 	XrSwapchain swapchain;
-	XrSwapchainImageOpenGLKHR *images;
+	SwapchainImage *images;
 	uint32 imageCount;
 	GLuint chainFBO;
 	int chainW, chainH;
 
 	// Per eye swapchains (stereo mode)
 	XrSwapchain eyeChain[kEyeCount];
-	XrSwapchainImageOpenGLKHR *eyeImages[kEyeCount];
+	SwapchainImage *eyeImages[kEyeCount];
 	uint32 eyeImageCount[kEyeCount];
 	int eyeW, eyeH;
 	GLuint eyeFBO, eyeDepth;
@@ -149,6 +110,11 @@ struct Context {
 
 	float headYaw, headPitch;
 	bool headValid;
+	XrPosef headPose;
+
+	// The theatre quad
+	XrPosef quadPose;
+	bool quadAnchored;
 	float aimYaw, aimPitch;
 	float aimDir[3];
 	bool aimValid;
@@ -171,7 +137,6 @@ struct Context {
 
 	uint32 lastFrameTicks;
 	uint32 periodMs;
-	bool firstFrameLogged;
 
 	Context() {
 		memset(this, 0, sizeof(*this));
@@ -191,6 +156,9 @@ struct Context {
 		}
 		activeHand = kHandRight;
 		periodMs = 11;
+		headPose.orientation.w = 1.0f;
+		quadPose.orientation.w = 1.0f;
+		quadPose.position.z = -kQuadDistance;
 	}
 };
 
@@ -216,7 +184,7 @@ bool check(XrResult result, const char *what) {
 
 template<class T>
 bool loadGL(T &fn, const char *name) {
-	fn = (T)SDL_GL_GetProcAddress(name);
+	fn = (T)Platform::getProcAddress(name);
 	return fn != nullptr;
 }
 
@@ -230,6 +198,8 @@ bool loadGLFuncs(GLFuncs &gl) {
 	       loadGL(gl.bindRenderbuffer, "glBindRenderbuffer") &&
 	       loadGL(gl.renderbufferStorage, "glRenderbufferStorage") &&
 	       loadGL(gl.framebufferRenderbuffer, "glFramebufferRenderbuffer") &&
+	       loadGL(gl.deleteRenderbuffers, "glDeleteRenderbuffers") &&
+	       loadGL(gl.deleteTextures, "glDeleteTextures") &&
 	       loadGL(gl.genTextures, "glGenTextures") &&
 	       loadGL(gl.bindTexture, "glBindTexture") &&
 	       loadGL(gl.texImage2D, "glTexImage2D") &&
@@ -252,12 +222,16 @@ public:
 		_gl.getIntegerv(GL_READ_FRAMEBUFFER_BINDING, &_read);
 		_gl.getIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &_draw);
 		_gl.getIntegerv(GL_TEXTURE_BINDING_2D, &_tex);
+#ifdef GL_FRAMEBUFFER_SRGB
 		_srgb = _gl.isEnabled(GL_FRAMEBUFFER_SRGB);
 		_gl.disable(GL_FRAMEBUFFER_SRGB);
+#endif
 	}
 	~GLStateSaver() {
+#ifdef GL_FRAMEBUFFER_SRGB
 		if (_srgb)
 			_gl.enable(GL_FRAMEBUFFER_SRGB);
+#endif
 		_gl.bindTexture(GL_TEXTURE_2D, _tex);
 		_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, _read);
 		_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, _draw);
@@ -265,7 +239,7 @@ public:
 private:
 	GLFuncs &_gl;
 	GLint _read, _draw, _tex;
-	GLboolean _srgb;
+	GLboolean _srgb = GL_FALSE;
 };
 
 float radToDeg(float r) {
@@ -283,6 +257,36 @@ void orientationToEuler(const XrQuaternionf &q, float &yaw, float &pitch, float 
 	yaw = radToDeg(atan2f(m02, m22));
 	pitch = radToDeg(asinf(CLIP(-m12, -1.0f, 1.0f)));
 	roll = radToDeg(atan2f(m10, m11));
+}
+
+float dot3(const float *a, const float *b) {
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+/** Rotate a vector by a unit quaternion, in place. */
+void rotateVector(const XrQuaternionf &q, float *v) {
+	const float t[3] = {
+		2.0f * (q.y * v[2] - q.z * v[1]),
+		2.0f * (q.z * v[0] - q.x * v[2]),
+		2.0f * (q.x * v[1] - q.y * v[0])
+	};
+	const float r[3] = {
+		v[0] + q.w * t[0] + (q.y * t[2] - q.z * t[1]),
+		v[1] + q.w * t[1] + (q.z * t[0] - q.x * t[2]),
+		v[2] + q.w * t[2] + (q.x * t[1] - q.y * t[0])
+	};
+	v[0] = r[0];
+	v[1] = r[1];
+	v[2] = r[2];
+}
+
+XrQuaternionf multiplyQuaternions(const XrQuaternionf &a, const XrQuaternionf &b) {
+	XrQuaternionf r;
+	r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+	r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+	r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+	r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+	return r;
 }
 
 /** The forward vector (0, 0, -1) rotated by q. */
@@ -393,77 +397,24 @@ bool createActions(Context &c) {
 }
 
 bool createSession(Context &c) {
-	SDL_SysWMinfo wm;
-	SDL_VERSION(&wm.version);
-	if (!SDL_GetWindowWMInfo(c.window, &wm) || wm.subsystem != SDL_SYSWM_X11) {
-		warning("OpenXR: theatre mode needs an X11 window (try SDL_VIDEODRIVER=x11)");
-		return false;
-	}
-
-	typedef GLXContext (*GetCurrentContextFn)();
-	typedef GLXDrawable (*GetCurrentDrawableFn)();
-	typedef void (*QueryDrawableFn)(Display *, GLXDrawable, int, unsigned int *);
-	typedef GLXFBConfig *(*ChooseFBConfigFn)(Display *, int, const int *, int *);
-	typedef int (*GetFBConfigAttribFn)(Display *, GLXFBConfig, int, int *);
-	GetCurrentContextFn getCurrentContext;
-	GetCurrentDrawableFn getCurrentDrawable;
-	QueryDrawableFn queryDrawable;
-	ChooseFBConfigFn chooseFBConfig;
-	GetFBConfigAttribFn getFBConfigAttrib;
-	if (!loadGL(getCurrentContext, "glXGetCurrentContext") || !loadGL(getCurrentDrawable, "glXGetCurrentDrawable") ||
-	    !loadGL(queryDrawable, "glXQueryDrawable") || !loadGL(chooseFBConfig, "glXChooseFBConfig") ||
-	    !loadGL(getFBConfigAttrib, "glXGetFBConfigAttrib")) {
-		warning("OpenXR: GLX entry points not available");
-		return false;
-	}
-
-	Display *display = wm.info.x11.display;
-	GLXContext glxContext = getCurrentContext();
-	GLXDrawable drawable = getCurrentDrawable();
-	if (!glxContext || !drawable) {
-		warning("OpenXR: no current GLX context");
-		return false;
-	}
-
-	unsigned int fbConfigId = 0;
-	queryDrawable(display, drawable, GLX_FBCONFIG_ID, &fbConfigId);
-	int attribs[] = { GLX_FBCONFIG_ID, (int)fbConfigId, None };
-	int numConfigs = 0;
-	GLXFBConfig *configs = chooseFBConfig(display, DefaultScreen(display), attribs, &numConfigs);
-	if (!configs || numConfigs < 1) {
-		warning("OpenXR: could not find the GLX framebuffer config");
-		return false;
-	}
-	int visualId = 0;
-	getFBConfigAttrib(display, configs[0], GLX_VISUAL_ID, &visualId);
-
-	const char *extensions[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
+	Common::Array<const char *> extensions;
+	Platform::getExtensions(extensions);
 	XrInstanceCreateInfo instanceInfo = xrStruct<XrInstanceCreateInfo>(XR_TYPE_INSTANCE_CREATE_INFO);
 	strcpy(instanceInfo.applicationInfo.applicationName, "ScummVM");
 	instanceInfo.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-	instanceInfo.enabledExtensionCount = ARRAYSIZE(extensions);
-	instanceInfo.enabledExtensionNames = extensions;
+	instanceInfo.next = Platform::getInstanceNext();
+	instanceInfo.enabledExtensionCount = extensions.size();
+	instanceInfo.enabledExtensionNames = extensions.data();
 	XR_TRY(xrCreateInstance(&instanceInfo, &c.instance));
 
 	XrSystemGetInfo systemInfo = xrStruct<XrSystemGetInfo>(XR_TYPE_SYSTEM_GET_INFO);
 	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 	XR_TRY(xrGetSystem(c.instance, &systemInfo, &c.systemId));
 
-	PFN_xrGetOpenGLGraphicsRequirementsKHR getRequirements = nullptr;
-	XR_TRY(xrGetInstanceProcAddr(c.instance, "xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction *)&getRequirements));
-	XrGraphicsRequirementsOpenGLKHR requirements = xrStruct<XrGraphicsRequirementsOpenGLKHR>(XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR);
-	XR_TRY(getRequirements(c.instance, c.systemId, &requirements));
-
-	XrGraphicsBindingOpenGLXlibKHR binding = xrStruct<XrGraphicsBindingOpenGLXlibKHR>(XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR);
-	binding.xDisplay = display;
-	binding.visualid = visualId;
-	binding.glxFBConfig = configs[0];
-	binding.glxDrawable = drawable;
-	binding.glxContext = glxContext;
-	XrSessionCreateInfo sessionInfo = xrStruct<XrSessionCreateInfo>(XR_TYPE_SESSION_CREATE_INFO);
-	sessionInfo.next = &binding;
-	sessionInfo.systemId = c.systemId;
-	XR_TRY(xrCreateSession(c.instance, &sessionInfo, &c.session));
+	if (!Platform::createSession(c.instance, c.systemId, c.session)) {
+		warning("OpenXR: could not create a session for the GL context");
+		return false;
+	}
 
 	XrReferenceSpaceCreateInfo spaceInfo = xrStruct<XrReferenceSpaceCreateInfo>(XR_TYPE_REFERENCE_SPACE_CREATE_INFO);
 	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
@@ -518,7 +469,7 @@ bool createSession(Context &c) {
 	return true;
 }
 
-void destroySwapchain(XrSwapchain &chain, XrSwapchainImageOpenGLKHR *&images, uint32 &count) {
+void destroySwapchain(XrSwapchain &chain, SwapchainImage *&images, uint32 &count) {
 	if (chain != XR_NULL_HANDLE) {
 		xrDestroySwapchain(chain);
 		chain = XR_NULL_HANDLE;
@@ -528,7 +479,7 @@ void destroySwapchain(XrSwapchain &chain, XrSwapchainImageOpenGLKHR *&images, ui
 	count = 0;
 }
 
-bool createSwapchain(Context &c, int w, int h, XrSwapchain &chain, XrSwapchainImageOpenGLKHR *&images, uint32 &count) {
+bool createSwapchain(Context &c, int w, int h, XrSwapchain &chain, SwapchainImage *&images, uint32 &count) {
 	destroySwapchain(chain, images, count);
 
 	XrSwapchainCreateInfo info = xrStruct<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
@@ -543,9 +494,9 @@ bool createSwapchain(Context &c, int w, int h, XrSwapchain &chain, XrSwapchainIm
 	XR_TRY(xrCreateSwapchain(c.session, &info, &chain));
 
 	XR_TRY(xrEnumerateSwapchainImages(chain, 0, &count, nullptr));
-	images = new XrSwapchainImageOpenGLKHR[count];
+	images = new SwapchainImage[count];
 	for (uint32 i = 0; i < count; i++)
-		images[i] = xrStruct<XrSwapchainImageOpenGLKHR>(XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR);
+		images[i] = xrStruct<SwapchainImage>(kSwapchainImageType);
 	XR_TRY(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader *)images));
 	return true;
 }
@@ -556,9 +507,8 @@ void fail(Context &c) {
 }
 
 bool init(Context &c) {
-	c.window = SDL_GL_GetCurrentWindow();
-	if (!c.window || !loadGLFuncs(c.gl)) {
-		warning("OpenXR: could not get the SDL window or required GL functions");
+	if (!Platform::initLoader() || !Platform::init() || !loadGLFuncs(c.gl)) {
+		warning("OpenXR: could not get the window or required GL functions");
 		return false;
 	}
 	if (!createSession(c))
@@ -573,7 +523,7 @@ bool init(Context &c) {
 Context *getContext() {
 	if (g_ctx)
 		return g_ctx->state == kRunning ? g_ctx : nullptr;
-	if (!getenv("SCUMMVM_XR"))
+	if (!Platform::isRequested())
 		return nullptr;
 
 	g_ctx = new Context();
@@ -629,44 +579,10 @@ void handleEvents(Context &c) {
 }
 
 bool stereoRecent(const Context &c) {
-	return c.stereoEverSubmitted && SDL_GetTicks() - c.stereoTicks < kStereoTimeoutMs;
+	return c.stereoEverSubmitted && g_system->getMillis(true) - c.stereoTicks < kStereoTimeoutMs;
 }
 
-void pushMouseMotion(Context &c, int x, int y) {
-	SDL_Event ev;
-	memset(&ev, 0, sizeof(ev));
-	ev.type = SDL_MOUSEMOTION;
-	ev.motion.windowID = SDL_GetWindowID(c.window);
-	ev.motion.x = x;
-	ev.motion.y = y;
-	SDL_PushEvent(&ev);
-}
-
-void pushMouseButton(Context &c, bool down, int x, int y) {
-	SDL_Event ev;
-	memset(&ev, 0, sizeof(ev));
-	ev.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-	ev.button.windowID = SDL_GetWindowID(c.window);
-	ev.button.button = SDL_BUTTON_LEFT;
-	ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
-	ev.button.clicks = 1;
-	ev.button.x = x;
-	ev.button.y = y;
-	SDL_PushEvent(&ev);
-}
-
-void pushEscape(Context &c, bool down) {
-	SDL_Event ev;
-	memset(&ev, 0, sizeof(ev));
-	ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
-	ev.key.windowID = SDL_GetWindowID(c.window);
-	ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
-	ev.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
-	ev.key.keysym.sym = SDLK_ESCAPE;
-	SDL_PushEvent(&ev);
-}
-
-/** Translate controller state into SDL events, and track the head and aim poses. */
+/** Translate controller state into input events, and track the head and aim poses. */
 void updateInput(Context &c, XrTime time) {
 	XrSpaceLocation headLocation = xrStruct<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
 	const XrSpaceLocationFlags needed = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
@@ -675,6 +591,7 @@ void updateInput(Context &c, XrTime time) {
 	    (headLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
 		float roll;
 		orientationToEuler(headLocation.pose.orientation, c.headYaw, c.headPitch, roll);
+		c.headPose = headLocation.pose;
 		c.headValid = true;
 	}
 
@@ -720,7 +637,7 @@ void updateInput(Context &c, XrTime time) {
 		}
 	}
 
-	const uint32 now = SDL_GetTicks();
+	const uint32 now = g_system->getMillis(true);
 	const float elapsed = MIN<float>((now - c.lastTurnTicks) / 1000.0f, 0.1f);
 	c.lastTurnTicks = now;
 	if (c.snapTurn) {
@@ -737,7 +654,7 @@ void updateInput(Context &c, XrTime time) {
 
 	// Aim ray of the active hand
 	int winW, winH;
-	SDL_GetWindowSize(c.window, &winW, &winH);
+	Platform::getWindowSize(winW, winH);
 	int mouseX = c.lastMouseX, mouseY = c.lastMouseY;
 	bool onScreen = false;
 
@@ -755,37 +672,56 @@ void updateInput(Context &c, XrTime time) {
 		c.aimValid = true;
 
 		// Intersect with the theatre quad
-		if (c.mirrorW > 0 && dz < -0.001f) {
-			const float t = (-kQuadDistance - location.pose.position.z) / dz;
-			const float hitX = location.pose.position.x + t * dx;
-			const float hitY = location.pose.position.y + t * dy;
-			const float height = kQuadWidth * c.mirrorH / (float)c.mirrorW;
-			const float u = hitX / kQuadWidth + 0.5f;
-			const float v = 0.5f - hitY / height;
-			if (t > 0.0f && u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f) {
-				mouseX = (int)(u * winW);
-				mouseY = (int)(v * winH);
-				onScreen = true;
+		if (c.quadAnchored && c.mirrorW > 0) {
+			const float ray[3] = { dx, dy, dz };
+			float normal[3] = { 0.0f, 0.0f, 1.0f };
+			float right[3] = { 1.0f, 0.0f, 0.0f };
+			float up[3] = { 0.0f, 1.0f, 0.0f };
+			rotateVector(c.quadPose.orientation, normal);
+			rotateVector(c.quadPose.orientation, right);
+			rotateVector(c.quadPose.orientation, up);
+
+			const float denominator = dot3(ray, normal);
+			if (fabsf(denominator) > 0.001f) {
+				const float toQuad[3] = {
+					c.quadPose.position.x - location.pose.position.x,
+					c.quadPose.position.y - location.pose.position.y,
+					c.quadPose.position.z - location.pose.position.z
+				};
+				const float t = dot3(toQuad, normal) / denominator;
+				const float hit[3] = {
+					location.pose.position.x + t * dx - c.quadPose.position.x,
+					location.pose.position.y + t * dy - c.quadPose.position.y,
+					location.pose.position.z + t * dz - c.quadPose.position.z
+				};
+				const float height = kQuadWidth * c.mirrorH / (float)c.mirrorW;
+				const float u = dot3(hit, right) / kQuadWidth + 0.5f;
+				const float v = 0.5f - dot3(hit, up) / height;
+				if (t > 0.0f && u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f) {
+					mouseX = (int)(u * winW);
+					mouseY = (int)(v * winH);
+					onScreen = true;
+				}
 			}
 		}
 	}
 
 	// In stereo mode the engine maps the aim ray to its own pointer
 	if (onScreen && !stereoRecent(c)) {
-		pushMouseMotion(c, mouseX, mouseY);
+		Platform::pushMouseMotion(mouseX, mouseY);
 		c.lastMouseX = mouseX;
 		c.lastMouseY = mouseY;
 	}
 
 	const bool selectActive = selectNow[c.activeHand];
 	if (selectActive != c.buttonHeld && (onScreen || stereoRecent(c) || !selectActive)) {
-		pushMouseButton(c, selectActive, mouseX, mouseY);
+		Platform::pushMouseButton(selectActive, mouseX, mouseY);
 		c.buttonHeld = selectActive;
 	}
 
 	for (int h = 0; h < kHandCount; h++) {
 		if (menuNow[h] != c.menuDown[h])
-			pushEscape(c, menuNow[h]);
+			Platform::pushEscape(menuNow[h]);
 		c.selectDown[h] = selectNow[h];
 		c.menuDown[h] = menuNow[h];
 	}
@@ -816,6 +752,25 @@ bool locateViews(Context &c) {
 	}
 	c.viewsValid = true;
 	return true;
+}
+
+/** Place the theatre quad in front of where the user is looking, upright. */
+void anchorQuad(Context &c) {
+	c.quadAnchored = true;
+	if (!c.headValid)
+		return;
+
+	const float halfYaw = c.headYaw * (float)M_PI / 360.0f;
+	const float halfPitch = c.headPitch * (float)M_PI / 360.0f;
+	XrQuaternionf yaw = { 0.0f, sinf(halfYaw), 0.0f, cosf(halfYaw) };
+	XrQuaternionf pitch = { sinf(halfPitch), 0.0f, 0.0f, cosf(halfPitch) };
+	c.quadPose.orientation = multiplyQuaternions(yaw, pitch);
+
+	float forward[3] = { 0.0f, 0.0f, -1.0f };
+	rotateVector(c.quadPose.orientation, forward);
+	c.quadPose.position.x = c.headPose.position.x + forward[0] * kQuadDistance;
+	c.quadPose.position.y = c.headPose.position.y + forward[1] * kQuadDistance;
+	c.quadPose.position.z = c.headPose.position.z + forward[2] * kQuadDistance;
 }
 
 bool openFrame(Context &c) {
@@ -850,6 +805,7 @@ bool closeFrame(Context &c) {
 		projection.viewCount = kEyeCount;
 		projection.views = projectionViews;
 		layers[layerCount++] = (const XrCompositionLayerBaseHeader *)&projection;
+		c.quadAnchored = false;
 	} else if (c.frameState.shouldRender && c.mirrorValid) {
 		if (c.swapchain == XR_NULL_HANDLE || c.chainW != c.mirrorW || c.chainH != c.mirrorH) {
 			if (!createSwapchain(c, c.mirrorW, c.mirrorH, c.swapchain, c.images, c.imageCount))
@@ -883,8 +839,9 @@ bool closeFrame(Context &c) {
 		quad.subImage.swapchain = c.swapchain;
 		quad.subImage.imageRect.extent.width = c.chainW;
 		quad.subImage.imageRect.extent.height = c.chainH;
-		quad.pose.orientation.w = 1.0f;
-		quad.pose.position.z = -kQuadDistance;
+		if (!c.quadAnchored)
+			anchorQuad(c);
+		quad.pose = c.quadPose;
 		quad.size.width = kQuadWidth;
 		quad.size.height = kQuadWidth * c.chainH / (float)c.chainW;
 		layers[layerCount++] = (const XrCompositionLayerBaseHeader *)&quad;
@@ -898,11 +855,6 @@ bool closeFrame(Context &c) {
 	c.frameOpen = false;
 	c.stereoRendered = false;
 	XR_TRY(xrEndFrame(c.session, &endInfo));
-
-	if (!c.firstFrameLogged && layerCount) {
-		debug(1, "OpenXR: first frame submitted");
-		c.firstFrameLogged = true;
-	}
 	return true;
 }
 
@@ -936,7 +888,7 @@ void captureBackbuffer() {
 		return;
 
 	int w, h;
-	SDL_GL_GetDrawableSize(c->window, &w, &h);
+	Platform::getDrawableSize(w, h);
 	if (w <= 0 || h <= 0)
 		return;
 
@@ -971,7 +923,7 @@ void pump() {
 			return;
 
 		// xrWaitFrame paces us to the headset; don't call it more often than needed
-		const uint32 now = SDL_GetTicks();
+		const uint32 now = g_system->getMillis(true);
 		if (now - c->lastFrameTicks + 2 < c->periodMs)
 			return;
 
@@ -983,7 +935,7 @@ void pump() {
 
 	if (!closeFrame(*c))
 		fail(*c);
-	c->lastFrameTicks = SDL_GetTicks();
+	c->lastFrameTicks = g_system->getMillis(true);
 }
 
 bool beginStereo(int &width, int &height) {
@@ -1060,10 +1012,10 @@ void endStereo() {
 	c.gl.finish();
 	c.stereoRendered = true;
 	c.stereoEverSubmitted = true;
-	c.stereoTicks = SDL_GetTicks();
+	c.stereoTicks = g_system->getMillis(true);
 	if (!closeFrame(c))
 		fail(c);
-	c.lastFrameTicks = SDL_GetTicks();
+	c.lastFrameTicks = g_system->getMillis(true);
 }
 
 float consumeTurn() {
@@ -1072,6 +1024,15 @@ float consumeTurn() {
 	const float turn = g_ctx->pendingTurn;
 	g_ctx->pendingTurn = 0.0f;
 	return turn;
+}
+
+void leaveStereo() {
+	if (g_ctx)
+		g_ctx->stereoEverSubmitted = false;
+}
+
+bool isSessionRunning() {
+	return g_ctx && g_ctx->state == kRunning && g_ctx->sessionRunning;
 }
 
 bool isStereoActive() {
@@ -1129,6 +1090,16 @@ void shutdown() {
 
 	Context *c = g_ctx;
 	g_ctx = nullptr;
+
+	// The GL context is still current
+	if (c->gl.deleteFramebuffers && c->mirrorFBO) {
+		const GLuint framebuffers[] = { c->mirrorFBO, c->chainFBO, c->eyeFBO };
+		c->gl.deleteFramebuffers(ARRAYSIZE(framebuffers), framebuffers);
+		c->gl.deleteTextures(1, &c->mirrorTex);
+		if (c->eyeDepth)
+			c->gl.deleteRenderbuffers(1, &c->eyeDepth);
+	}
+
 	if (c->state == kRunning || c->session != XR_NULL_HANDLE) {
 		destroySwapchain(c->swapchain, c->images, c->imageCount);
 		for (int e = 0; e < kEyeCount; e++)
@@ -1153,6 +1124,4 @@ void shutdown() {
 
 } // End of namespace XR
 
-#endif // SDL_VIDEO_DRIVER_X11
-
-#endif // USE_OPENXR && SDL_BACKEND
+#endif // USE_OPENXR

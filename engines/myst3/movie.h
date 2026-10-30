@@ -50,6 +50,10 @@ public:
 	void setPosU(int32 v) { _posU = v; }
 	void setPosV(int32 v) { _posV = v; }
 	void setForce2d(bool b);
+#ifdef USE_OPENXR
+	/** Show the movie in the panorama, where it starts, at the specified horizontal field of view */
+	void setWorldPlacement(float fov);
+#endif
 	void setForceOpaque(bool b) { _forceOpaque = b; }
 	void setStartFrame(int32 v);
 	void setEndFrame(int32 v);
@@ -67,6 +71,9 @@ protected:
 	Math::Vector3d _pTopRight;
 
 	bool _force2d;
+#ifdef USE_OPENXR
+	Math::Vector3d _startDirection;
+#endif
 	bool _forceOpaque;
 	int32 _posU;
 	int32 _posV;

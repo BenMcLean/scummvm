@@ -194,6 +194,7 @@ endif
 # OpenXR (VR headset) support
 ifdef USE_OPENXR
 MODULE_OBJS += \
+	xr/openxr-sdl.o \
 	xr/openxr-theatre.o
 endif
 

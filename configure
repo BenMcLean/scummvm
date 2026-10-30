@@ -5902,6 +5902,10 @@ fi
 # Check for OpenXR (optional, VR headset support; never autodetected)
 #
 echocheck "OpenXR"
+if test "$_openxr" = yes && test "$_backend" != sdl ; then
+	# The only platform layer so far is backends/xr/openxr-sdl.cpp
+	_openxr=no
+fi
 if test "$_openxr" = yes ; then
 	cat > $TMPC << EOF
 #include <openxr/openxr.h>

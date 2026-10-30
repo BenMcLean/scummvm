@@ -70,6 +70,12 @@ public:
 	/** Override the camera angles with the head pose */
 	void applyHeadTracking(float &pitch, float &heading);
 
+	/** Make the next view change of the game turn the world by the difference with this heading */
+	void xrAlignWorld(float referenceHeading);
+
+	/** Same, with the heading the user is currently looking at */
+	void xrAlignToGaze();
+
 	/** Direction the pointing controller aims at, in game angles */
 	bool getXRPointerDirection(float &pitch, float &heading);
 #endif

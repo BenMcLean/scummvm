@@ -98,6 +98,9 @@ void Movie::loadPosition(const ResourceDescription::VideoData &videoData) {
 
 	Math::Vector3d planeDirection = videoData.v1;
 	planeDirection.normalize();
+#ifdef USE_OPENXR
+	_startDirection = planeDirection;
+#endif
 
 	Math::Vector3d u;
 	u.set(planeDirection.z(), 0.0f, -planeDirection.x());
@@ -126,6 +129,31 @@ void Movie::loadPosition(const ResourceDescription::VideoData &videoData) {
 	_posU = videoData.u;
 	_posV = videoData.v;
 }
+
+#ifdef USE_OPENXR
+void Movie::setWorldPlacement(float fov) {
+	static const float scale = 50.0f;
+
+	Math::Vector3d u;
+	u.set(_startDirection.z(), 0.0f, -_startDirection.x());
+	u.normalize();
+
+	Math::Vector3d v = Math::Vector3d::crossProduct(_startDirection, u);
+	v.normalize();
+
+	const float halfWidth = scale * tanf(fov * M_PI / 360.0f);
+	const float halfHeight = halfWidth * _bink.getHeight() / (float)_bink.getWidth();
+	const Math::Vector3d origin = _startDirection * scale;
+
+	_pTopLeft = origin + v * halfHeight - u * halfWidth;
+	_pBottomLeft = origin - v * halfHeight - u * halfWidth;
+	_pBottomRight = origin - v * halfHeight + u * halfWidth;
+	_pTopRight = origin + v * halfHeight + u * halfWidth;
+
+	_is3D = true;
+	_force2d = false;
+}
+#endif
 
 void Movie::draw2d() {
 	Common::Rect screenRect = Common::Rect(_bink.getWidth(), _bink.getHeight());

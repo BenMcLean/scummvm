@@ -1,3 +1,10 @@
+# Guidelines for AI Usage in the BenMcLean fork of the ScummVM Project
+I do the commits, AI leaves them alone but the code is written ideally so that it adheres to ScummVM's style and so that we can keep accepting upstream changes as much as possible, as a "soft" fork if we can.
+
+Maybe someday, I'll do a massive, careful review that might potentially result in submitting upstream, but for now, we don't worry about it.
+
+The upstream ScummVM project's guidelines are below but they're not rules constraining this fork. If I ever decide to submit upstream, then I'll squash the commit into something that conforms to their rules, but I'm not going to go typing out a long thing in every individual commit message when I'm on my own fork every time I commit. I make too many commits for that.
+
 # Guidelines for AI Usage in the ScummVM Project
 
 This document provides guidance for AI tools and developers using AI
