@@ -25,7 +25,20 @@
 #include "engines/myst3/scene.h"
 #include "engines/myst3/state.h"
 
+#ifdef USE_OPENXR
+#include "backends/xr/openxr-theatre.h"
+
+#include "math/utils.h"
+#endif
+
 namespace Myst3 {
+
+#ifdef USE_OPENXR
+// Distance of the panel in the panorama, and the angle covered by one of its pixels
+static const float kXRPanelDistance = 50.0f;
+static const float kXRPanelPixelAngle = 0.15f;
+static const int kXRPanelPadding = 8;
+#endif
 
 const Inventory::ItemData Inventory::_availableItems[8] = {
 	{   0, 41, 47, 481 },
@@ -41,7 +54,12 @@ const Inventory::ItemData Inventory::_availableItems[8] = {
 Inventory::Inventory(Myst3Engine *vm) :
 		Window(),
 		_vm(vm),
-		_texture(nullptr) {
+		_texture(nullptr)
+#ifdef USE_OPENXR
+		, _xrShown(false)
+		, _xrBackdrop(nullptr)
+#endif
+		{
 	_scaled = !_vm->isWideScreenModEnabled();
 	_hidden = !_scaled;
 	initializeTexture();
@@ -49,6 +67,9 @@ Inventory::Inventory(Myst3Engine *vm) :
 
 Inventory::~Inventory() {
 	delete _texture;
+#ifdef USE_OPENXR
+	delete _xrBackdrop;
+#endif
 }
 
 void Inventory::initializeTexture() {
@@ -61,6 +82,13 @@ void Inventory::initializeTexture() {
 }
 
 bool Inventory::isMouseInside() {
+#ifdef USE_OPENXR
+	if (useXRPointer()) {
+		Common::Point point;
+		return _xrShown && getXRPanelPoint(point) && getXRPanelRect().contains(point);
+	}
+#endif
+
 	Common::Point mouse = _vm->_cursor->getPosition(false);
 	if (_vm->isWideScreenModEnabled()) {
 		Common::Rect triggerArea;
@@ -233,8 +261,17 @@ void Inventory::reflow() {
 }
 
 uint16 Inventory::hoveredItem() {
-	Common::Point mouse = _vm->_cursor->getPosition(false);
-	mouse = scalePoint(mouse);
+	Common::Point mouse;
+#ifdef USE_OPENXR
+	if (useXRPointer()) {
+		if (!getXRPanelPoint(mouse))
+			return 0;
+	} else
+#endif
+	{
+		mouse = _vm->_cursor->getPosition(false);
+		mouse = scalePoint(mouse);
+	}
 
 	for (ItemList::const_iterator it = _inventory.begin(); it != _inventory.end(); it++) {
 		if(it->rect.contains(mouse))
@@ -245,6 +282,10 @@ uint16 Inventory::hoveredItem() {
 }
 
 void Inventory::useItem(uint16 var) {
+#ifdef USE_OPENXR
+	_xrShown = false;
+#endif
+
 	switch (var) {
 	case 277: // Atrus
 		closeAllBooks();
@@ -364,6 +405,108 @@ void Inventory::updateCursor() {
 		_vm->_cursor->changeCursor(8);
 	}
 }
+
+#ifdef USE_OPENXR
+bool Inventory::useXRPointer() const {
+	return XR::isStereoActive() && _vm->_state->getViewType() == kCube;
+}
+
+void Inventory::toggleXR(float pitch, float heading) {
+	_xrShown = !_xrShown && !_inventory.empty();
+	if (!_xrShown)
+		return;
+
+	// Centered on the horizon, following only the head yaw
+	_xrForward = Scene::directionToVector(0.0f, 90.0f - heading);
+	_xrRight.set(_xrForward.z(), 0.0f, -_xrForward.x());
+	_xrRight.normalize();
+	_xrUp = Math::Vector3d::crossProduct(_xrForward, _xrRight);
+	_xrUp.normalize();
+}
+
+Common::Rect Inventory::getXRPanelRect() const {
+	Common::Rect panel;
+	for (ItemList::const_iterator it = _inventory.begin(); it != _inventory.end(); it++) {
+		if (panel.isEmpty())
+			panel = it->rect;
+		else
+			panel.extend(it->rect);
+	}
+
+	panel.grow(kXRPanelPadding);
+	return panel;
+}
+
+Math::Vector3d Inventory::xrPanelToWorld(const Common::Rect &panel, float x, float y) const {
+	const float pixelSize = kXRPanelDistance * tanf(Math::deg2rad(kXRPanelPixelAngle));
+	const Common::Point center = Common::Point((panel.left + panel.right) / 2, (panel.top + panel.bottom) / 2);
+
+	return _xrForward * kXRPanelDistance
+			+ _xrRight * ((x - center.x) * pixelSize)
+			- _xrUp * ((y - center.y) * pixelSize);
+}
+
+bool Inventory::getXRPanelPoint(Common::Point &point) const {
+	float pitch, heading;
+	if (!_vm->_scene->getXRPointerDirection(pitch, heading))
+		return false;
+
+	const Math::Vector3d ray = Scene::directionToVector(pitch, 90.0f - heading);
+	const float facing = Math::Vector3d::dotProduct(ray, _xrForward);
+	if (facing < 0.1f)
+		return false;
+
+	const Math::Vector3d hit = ray * (kXRPanelDistance / facing) - _xrForward * kXRPanelDistance;
+	const float pixelSize = kXRPanelDistance * tanf(Math::deg2rad(kXRPanelPixelAngle));
+	const Common::Rect panel = getXRPanelRect();
+
+	point.x = (panel.left + panel.right) / 2 + (int16)floorf(Math::Vector3d::dotProduct(hit, _xrRight) / pixelSize);
+	point.y = (panel.top + panel.bottom) / 2 - (int16)floorf(Math::Vector3d::dotProduct(hit, _xrUp) / pixelSize);
+	return true;
+}
+
+void Inventory::drawXR() {
+	if (!_xrShown)
+		return;
+
+	const Common::Rect panel = getXRPanelRect();
+
+	if (!_xrBackdrop) {
+		Graphics::Surface surface;
+		surface.create(1, 1, Texture::getRGBAPixelFormat());
+		surface.fillRect(Common::Rect(1, 1), surface.format.ARGBToColor(160, 0, 0, 0));
+		_xrBackdrop = _vm->_gfx->createTexture2D(&surface);
+		surface.free();
+	}
+
+	_vm->_gfx->drawTexturedRect3D(
+			xrPanelToWorld(panel, panel.left, panel.top), xrPanelToWorld(panel, panel.left, panel.bottom),
+			xrPanelToWorld(panel, panel.right, panel.top), xrPanelToWorld(panel, panel.right, panel.bottom),
+			_xrBackdrop);
+
+	const uint16 hoveredItemVar = hoveredItem();
+
+	for (ItemList::const_iterator it = _inventory.begin(); it != _inventory.end(); it++) {
+		const int32 state = _vm->_state->getVar(it->var);
+		if (state == -1 || state == 0)
+			continue;
+
+		const ItemData &item = getData(it->var);
+
+		Common::Rect textureRect = Common::Rect(item.textureWidth, item.textureHeight);
+		textureRect.translate(item.textureX, 0);
+
+		if (it->var == hoveredItemVar || state == 2)
+			textureRect.translate(0, _texture->height / 2);
+
+		const Common::Rect &r = it->rect;
+		_vm->_gfx->drawTexturedRect3D(
+				xrPanelToWorld(panel, r.left, r.top), xrPanelToWorld(panel, r.left, r.bottom),
+				xrPanelToWorld(panel, r.right, r.top), xrPanelToWorld(panel, r.right, r.bottom),
+				textureRect, _texture);
+	}
+}
+#endif
 
 DragItem::DragItem(Myst3Engine *vm, uint id):
 		_vm(vm),

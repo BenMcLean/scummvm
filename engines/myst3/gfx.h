@@ -167,6 +167,11 @@ public:
 	void setXRTarget(int width, int height) { _xrTarget = Common::Rect(width, height); }
 
 	void setupCameraXR(const Math::Matrix4 &projection, const Math::Matrix4 &modelView);
+
+	/** Draw a part of a texture on a quad in the scene */
+	virtual void drawTexturedRect3D(const Math::Vector3d &topLeft, const Math::Vector3d &bottomLeft,
+	                                const Math::Vector3d &topRight, const Math::Vector3d &bottomRight,
+	                                const Common::Rect &textureRect, Texture *texture) {}
 #endif
 
 	bool isCubeFaceVisible(uint face);

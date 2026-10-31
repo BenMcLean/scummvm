@@ -723,6 +723,10 @@ void Myst3Engine::interactWithHoveredElement() {
 		return;
 	}
 
+#ifdef USE_OPENXR
+	_inventory->closeXR();
+#endif
+
 	NodePtr nodeData = _db->getNodeData(_state->getLocationNode(), _state->getLocationRoom(), _state->getLocationAge());
 	HotSpot *hovered = getHoveredHotspot(nodeData);
 
@@ -955,6 +959,11 @@ void Myst3Engine::loadNode(uint16 nodeID, uint32 roomID, uint32 ageID) {
 }
 
 void Myst3Engine::unloadNode() {
+#ifdef USE_OPENXR
+	if (_inventory)
+		_inventory->closeXR();
+#endif
+
 	if (!_node)
 		return;
 

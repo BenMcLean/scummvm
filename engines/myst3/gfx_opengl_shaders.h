@@ -54,6 +54,12 @@ public:
 	                                const Math::Vector3d &topRight, const Math::Vector3d &bottomRight,
 	                                Texture *texture) override;
 
+#ifdef USE_OPENXR
+	void drawTexturedRect3D(const Math::Vector3d &topLeft, const Math::Vector3d &bottomLeft,
+	                        const Math::Vector3d &topRight, const Math::Vector3d &bottomRight,
+	                        const Common::Rect &textureRect, Texture *texture) override;
+#endif
+
 	void drawCube(Texture **textures) override;
 	void draw2DText(const Common::String &text, const Common::Point &position) override;
 

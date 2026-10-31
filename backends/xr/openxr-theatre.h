@@ -84,6 +84,9 @@ void endStereo();
  */
 float consumeTurn();
 
+/** Whether the inventory button was pressed since the last call. */
+bool consumeInventoryToggle();
+
 /** Stop considering the engine to be rendering stereo frames. The window is shown on the theatre quad. */
 void leaveStereo();
 

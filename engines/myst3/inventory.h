@@ -28,6 +28,8 @@
 
 #include "engines/myst3/gfx.h"
 
+#include "math/vector3d.h"
+
 #include "video/bink_decoder.h"
 
 namespace Myst3 {
@@ -68,6 +70,17 @@ public:
 
 	void draw() override;
 
+#ifdef USE_OPENXR
+	bool isXRShown() const { return _xrShown; }
+
+	/** Show the inventory in front of the given direction, or hide it */
+	void toggleXR(float pitch, float heading);
+	void closeXR() { _xrShown = false; }
+
+	/** Draw the inventory as a panel in the panorama */
+	void drawXR();
+#endif
+
 private:
 	struct InventoryItem {
 		uint16 var;
@@ -98,6 +111,20 @@ private:
 
 	void openBook(uint16 age, uint16 room, uint16 node);
 	void closeAllBooks();
+
+#ifdef USE_OPENXR
+	bool _xrShown;
+	Math::Vector3d _xrForward, _xrRight, _xrUp;
+	Texture *_xrBackdrop;
+
+	/** Whether the pointer is the controller ray, instead of the mouse */
+	bool useXRPointer() const;
+	Common::Rect getXRPanelRect() const;
+	Math::Vector3d xrPanelToWorld(const Common::Rect &panel, float x, float y) const;
+
+	/** Where the controller ray crosses the panel, in item rectangle coordinates */
+	bool getXRPanelPoint(Common::Point &point) const;
+#endif
 };
 
 class DragItem : public Drawable {

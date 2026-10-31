@@ -377,6 +377,44 @@ void ShaderRenderer::drawTexturedRect3D(const Math::Vector3d &topLeft, const Mat
 	glDepthMask(GL_TRUE);
 }
 
+#ifdef USE_OPENXR
+void ShaderRenderer::drawTexturedRect3D(const Math::Vector3d &topLeft, const Math::Vector3d &bottomLeft,
+	                                const Math::Vector3d &topRight, const Math::Vector3d &bottomRight,
+	                                const Common::Rect &textureRect, Texture *texture) {
+	OpenGLTexture *glTexture = static_cast<OpenGLTexture *>(texture);
+
+	const float s0 = textureRect.left / (float)glTexture->internalWidth;
+	const float s1 = textureRect.right / (float)glTexture->internalWidth;
+	const float t0 = textureRect.top / (float)glTexture->internalHeight;
+	const float t1 = textureRect.bottom / (float)glTexture->internalHeight;
+
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glEnable(GL_BLEND);
+	glDepthMask(GL_FALSE);
+
+	glBindTexture(GL_TEXTURE_2D, glTexture->id);
+
+	const GLfloat vertices[] = {
+		// S   T   X                  Y                 Z
+		  s0, t0,  -topLeft.x(),      topLeft.y(),      topLeft.z(),
+		  s0, t1,  -bottomLeft.x(),   bottomLeft.y(),   bottomLeft.z(),
+		  s1, t0,  -topRight.x(),     topRight.y(),     topRight.z(),
+		  s1, t1,  -bottomRight.x(),  bottomRight.y(),  bottomRight.z(),
+	};
+
+	_rect3dShader->use();
+	_rect3dShader->setUniform1f("texScale", 1.0f);
+	_rect3dShader->setUniform("mvpMatrix", _mvpMatrix);
+	glBindBuffer(GL_ARRAY_BUFFER, _rect3dVBO);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, 20 * sizeof(float), vertices);
+
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+	glDisable(GL_BLEND);
+	glDepthMask(GL_TRUE);
+}
+#endif
+
 Graphics::Surface *ShaderRenderer::getScreenshot() {
 	Common::Rect screen = viewport();
 

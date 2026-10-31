@@ -26,6 +26,7 @@
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/cursor.h"
 #include "engines/myst3/gfx.h"
+#include "engines/myst3/inventory.h"
 #include "engines/myst3/movie.h"
 #include "engines/myst3/node.h"
 #include "engines/myst3/scene.h"
@@ -105,7 +106,17 @@ bool Scene::getXRPointerDirection(float &pitch, float &heading) {
 }
 
 void Myst3Engine::drawXRFrame() {
-	if (_xrWorldMovie || (_state->getViewType() == kCube && !_xrTheater))
+	const bool panorama = _xrWorldMovie || (_state->getViewType() == kCube && !_xrTheater);
+
+	if (XR::consumeInventoryToggle() && panorama && !_xrWorldMovie && _scene->syncXR()) {
+		float headYaw, headPitch;
+		XR::getHeadOrientation(headYaw, headPitch);
+		_inventory->toggleXR(headPitch, _scene->getXRYawOffset() - headYaw);
+	} else if (!panorama) {
+		_inventory->closeXR();
+	}
+
+	if (panorama)
 		drawStereoPanorama();
 	else
 		XR::leaveStereo();
@@ -191,6 +202,8 @@ void Myst3Engine::drawStereoPanorama() {
 			if (_drawables[i]->is3D())
 				_gfx->renderDrawable(_drawables[i], _scene);
 		}
+
+		_inventory->drawXR();
 
 		float pointerX, pointerY;
 		if (hasPointer && _cursor->isVisible() && XR::projectAim(eye, pointerX, pointerY)) {

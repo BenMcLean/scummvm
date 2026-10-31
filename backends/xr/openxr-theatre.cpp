@@ -55,7 +55,7 @@ const float kQuadDistance = 2.0f;
 const float kQuadWidth = 3.2f;
 
 // Thumbstick turning
-const float kSmoothTurnSpeed = 120.0f; // degrees per second at full deflection
+const float kSmoothTurnSpeed = 240.0f; // degrees per second at full deflection
 const float kSnapTurnAngle = 45.0f;
 const float kTurnDeadZone = 0.15f;
 const float kSnapThreshold = 0.7f;
@@ -120,7 +120,7 @@ struct Context {
 	bool aimValid;
 
 	XrActionSet actionSet;
-	XrAction aimAction, selectAction, menuAction, turnAction, turnClickAction;
+	XrAction aimAction, selectAction, menuAction, turnAction, turnClickAction, inventoryAction;
 	XrPath handPath[kHandCount];
 	XrSpace aimSpace[kHandCount];
 	bool selectDown[kHandCount];
@@ -133,6 +133,7 @@ struct Context {
 	bool snapTurn;
 	bool snapLatched;
 	float pendingTurn;
+	bool inventoryPressed;
 	uint32 lastTurnTicks;
 
 	uint32 lastFrameTicks;
@@ -149,7 +150,7 @@ struct Context {
 		for (int e = 0; e < kEyeCount; e++)
 			eyeChain[e] = XR_NULL_HANDLE;
 		actionSet = XR_NULL_HANDLE;
-		aimAction = selectAction = menuAction = turnAction = turnClickAction = XR_NULL_HANDLE;
+		aimAction = selectAction = menuAction = turnAction = turnClickAction = inventoryAction = XR_NULL_HANDLE;
 		for (int h = 0; h < kHandCount; h++) {
 			handPath[h] = XR_NULL_PATH;
 			aimSpace[h] = XR_NULL_HANDLE;
@@ -304,7 +305,7 @@ struct BindingDef {
 	int hands;
 };
 
-enum { kActionAim, kActionSelect, kActionMenu, kActionTurn, kActionTurnClick, kActionCount };
+enum { kActionAim, kActionSelect, kActionMenu, kActionTurn, kActionTurnClick, kActionInventory, kActionCount };
 
 bool suggestBindings(Context &c, const XrAction *actions, const char *profileName, const BindingDef *defs, uint count, bool required) {
 	XrPath profile;
@@ -351,7 +352,8 @@ bool createActions(Context &c) {
 		{ XR_ACTION_TYPE_BOOLEAN_INPUT, "select" },
 		{ XR_ACTION_TYPE_BOOLEAN_INPUT, "menu" },
 		{ XR_ACTION_TYPE_FLOAT_INPUT, "turn" },
-		{ XR_ACTION_TYPE_BOOLEAN_INPUT, "turn_click" }
+		{ XR_ACTION_TYPE_BOOLEAN_INPUT, "turn_click" },
+		{ XR_ACTION_TYPE_BOOLEAN_INPUT, "inventory" }
 	};
 	XrAction actions[kActionCount];
 	for (int i = 0; i < kActionCount; i++) {
@@ -368,6 +370,7 @@ bool createActions(Context &c) {
 	c.menuAction = actions[kActionMenu];
 	c.turnAction = actions[kActionTurn];
 	c.turnClickAction = actions[kActionTurnClick];
+	c.inventoryAction = actions[kActionInventory];
 
 	// Standard Khronos interaction profiles; the runtime maps the connected device
 	static const BindingDef simple[] = {
@@ -380,6 +383,8 @@ bool createActions(Context &c) {
 		{ kActionSelect, "/input/trigger/value", kBothHands },
 		{ kActionMenu, "/input/menu/click", kLeftOnly },
 		{ kActionMenu, "/input/b/click", kRightOnly },
+		{ kActionInventory, "/input/x/click", kLeftOnly },
+		{ kActionInventory, "/input/a/click", kRightOnly },
 		{ kActionTurn, "/input/thumbstick/x", kBothHands },
 		{ kActionTurnClick, "/input/thumbstick/click", kBothHands }
 	};
@@ -387,6 +392,7 @@ bool createActions(Context &c) {
 		{ kActionAim, "/input/aim/pose", kBothHands },
 		{ kActionSelect, "/input/trigger/value", kBothHands },
 		{ kActionMenu, "/input/b/click", kBothHands },
+		{ kActionInventory, "/input/a/click", kBothHands },
 		{ kActionTurn, "/input/thumbstick/x", kBothHands },
 		{ kActionTurnClick, "/input/thumbstick/click", kBothHands }
 	};
@@ -610,6 +616,11 @@ void updateInput(Context &c, XrTime time) {
 
 		getInfo.action = c.selectAction;
 		selectNow[h] = XR_SUCCEEDED(xrGetActionStateBoolean(c.session, &getInfo, &state)) && state.currentState;
+		getInfo.action = c.inventoryAction;
+		XrActionStateBoolean inventory = xrStruct<XrActionStateBoolean>(XR_TYPE_ACTION_STATE_BOOLEAN);
+		if (XR_SUCCEEDED(xrGetActionStateBoolean(c.session, &getInfo, &inventory)) && inventory.changedSinceLastSync && inventory.currentState)
+			c.inventoryPressed = true;
+
 		getInfo.action = c.menuAction;
 		menuNow[h] = XR_SUCCEEDED(xrGetActionStateBoolean(c.session, &getInfo, &state)) && state.currentState;
 
@@ -1024,6 +1035,14 @@ float consumeTurn() {
 	const float turn = g_ctx->pendingTurn;
 	g_ctx->pendingTurn = 0.0f;
 	return turn;
+}
+
+bool consumeInventoryToggle() {
+	if (!g_ctx || g_ctx->state != kRunning)
+		return false;
+	const bool pressed = g_ctx->inventoryPressed;
+	g_ctx->inventoryPressed = false;
+	return pressed;
 }
 
 void leaveStereo() {
